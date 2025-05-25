@@ -1,80 +1,84 @@
 package engine
 
 import (
-	"database/sql"
-	"log"
-	"golang-order-matching-system/database"
-	"golang-order-matching-system/models"
+    "sort"
 )
 
-func MatchOrder(order models.Order) {
-	tx, err := db.DB.Begin()
-	if err != nil {
-		log.Println("Transaction begin failed:", err)
-		return
-	}
-	defer tx.Commit()
+// Order represents a simplified order
+type Order struct {
+    ID       int
+    Side     string  // "buy" or "sell"
+    Price    float64
+    Quantity int
+    // You can add Timestamp or CreatedAt for time priority if needed
+}
 
-	var rows *sql.Rows
-	if order.Side == "buy" {
-		rows, err = tx.Query(`SELECT id, price, remaining_quantity FROM orders 
-			WHERE symbol=? AND side='sell' AND status='open' 
-			AND (type='limit') ORDER BY price ASC, created_at ASC`, order.Symbol)
-	} else {
-		rows, err = tx.Query(`SELECT id, price, remaining_quantity FROM orders 
-			WHERE symbol=? AND side='buy' AND status='open' 
-			AND (type='limit') ORDER BY price DESC, created_at ASC`, order.Symbol)
-	}
-	if err != nil {
-		log.Println("Query failed:", err)
-		return
-	}
-	defer rows.Close()
+// Trade represents a matched trade
+type Trade struct {
+    BuyOrderID  int
+    SellOrderID int
+    Price       float64
+    Quantity    int
+}
 
-	remaining := order.Quantity
+// MatchOrders matches buy and sell orders and returns executed trades
+func MatchOrders(buys []Order, sells []Order) ([]Trade, []Order, []Order) {
+    trades := []Trade{}
 
-	for rows.Next() && remaining > 0 {
-		var matchID int
-		var matchPrice float64
-		var matchQty int
-		rows.Scan(&matchID, &matchPrice, &matchQty)
+    // Sort buy orders descending by price (highest first)
+    sort.Slice(buys, func(i, j int) bool {
+        return buys[i].Price > buys[j].Price
+    })
 
-		if order.Type == "limit" && ((order.Side == "buy" && order.Price < matchPrice) || (order.Side == "sell" && order.Price > matchPrice)) {
-			break
-		}
+    // Sort sell orders ascending by price (lowest first)
+    sort.Slice(sells, func(i, j int) bool {
+        return sells[i].Price < sells[j].Price
+    })
 
-		tradeQty := min(remaining, matchQty)
+    i, j := 0, 0
+    for i < len(buys) && j < len(sells) {
+        buy := &buys[i]
+        sell := &sells[j]
 
-		// Insert into trades
-		if order.Side == "buy" {
-			tx.Exec("INSERT INTO trades (buy_order_id, sell_order_id, symbol, price, quantity) VALUES (?, ?, ?, ?, ?)",
-				order.ID, matchID, order.Symbol, matchPrice, tradeQty)
-		} else {
-			tx.Exec("INSERT INTO trades (buy_order_id, sell_order_id, symbol, price, quantity) VALUES (?, ?, ?, ?, ?)",
-				matchID, order.ID, order.Symbol, matchPrice, tradeQty)
-		}
+        // If buy price < sell price, no match possible
+        if buy.Price < sell.Price {
+            break
+        }
 
-		// Update matched order
-		tx.Exec("UPDATE orders SET remaining_quantity = remaining_quantity - ?, status = CASE WHEN remaining_quantity - ? = 0 THEN 'filled' ELSE 'open' END WHERE id = ?",
-			tradeQty, tradeQty, matchID)
+        // Calculate matched quantity
+        qty := min(buy.Quantity, sell.Quantity)
+        tradePrice := sell.Price // or some logic (like midpoint)
 
-		remaining -= tradeQty
-	}
+        trades = append(trades, Trade{
+            BuyOrderID:  buy.ID,
+            SellOrderID: sell.ID,
+            Price:       tradePrice,
+            Quantity:    qty,
+        })
 
-	status := "open"
-	if remaining == 0 {
-		status = "filled"
-	} else if order.Type == "market" {
-		status = "canceled"
-	}
+        // Deduct matched qty
+        buy.Quantity -= qty
+        sell.Quantity -= qty
 
-	tx.Exec("INSERT INTO orders (symbol, side, type, price, quantity, remaining_quantity, status) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		order.Symbol, order.Side, order.Type, order.Price, order.Quantity, remaining, status)
+        // Remove fully filled orders
+        if buy.Quantity == 0 {
+            i++
+        }
+        if sell.Quantity == 0 {
+            j++
+        }
+    }
+
+    // Remaining unmatched orders
+    remainingBuys := buys[i:]
+    remainingSells := sells[j:]
+
+    return trades, remainingBuys, remainingSells
 }
 
 func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+    if a < b {
+        return a
+    }
+    return b
 }

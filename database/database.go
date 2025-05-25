@@ -1,4 +1,4 @@
-package db
+package database
 
 import (
     "database/sql"
@@ -7,20 +7,20 @@ import (
     _ "github.com/go-sql-driver/mysql"
 )
 
-var DB *sql.DB
+var db *sql.DB
 
 func InitDB() {
     var err error
-
-    // 👇 Using 'kovid' as username
-    DB, err = sql.Open("mysql", "kovid:Berzerk@27@tcp(localhost:3306)/ordersystem")
+    db, err = sql.Open("mysql", "kovid:Berzerk@27@tcp(127.0.0.1:3306)/ordersystem")
     if err != nil {
-        log.Fatal("Failed to open DB:", err)
+        log.Fatal("Error connecting to DB:", err)
     }
 
-    if err = DB.Ping(); err != nil {
-        log.Fatal("Failed to ping DB:", err)
+    if err = db.Ping(); err != nil {
+        log.Fatal("Ping failed:", err)
     }
+}
 
-    log.Println("✅ Connected to MariaDB!")
+func GetDB() *sql.DB {
+    return db
 }

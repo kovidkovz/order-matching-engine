@@ -1,12 +1,17 @@
 package main
 
 import (
-    "order_matching_engine/database"
+    "log"
+    "net/http"
     "order_matching_engine/api"
+    "order_matching_engine/database"
 )
 
 func main() {
-    db.InitDB()
-    router := api.SetupRouter()
-    router.Run(":8080")
+    database.InitDB()
+
+    http.HandleFunc("/orders", api.PlaceOrder)
+
+    log.Println("Server started at http://localhost:8080")
+    log.Fatal(http.ListenAndServe(":8080", nil))
 }
